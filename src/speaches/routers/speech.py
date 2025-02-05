@@ -4,7 +4,8 @@ from typing import Annotated, Literal, Self
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, BeforeValidator, Field, model_validator
-
+import wave
+import io
 from speaches import kokoro_utils
 from speaches.api_types import Voice
 from speaches.audio import convert_audio_format
@@ -18,6 +19,7 @@ from speaches.hf_utils import (
     read_piper_voices_config,
 )
 from speaches.kokoro import generate_and_save_audio
+import numpy as np
 
 DEFAULT_MODEL_ID = "hexgrad/Kokoro-82M"
 # https://platform.openai.com/docs/api-reference/audio/createSpeech#audio-createspeech-response_format
@@ -151,17 +153,37 @@ async def synthesize(
 ) -> StreamingResponse:
     match body.model:
         case "hexgrad/Kokoro-82M":
-            file_name = generate_and_save_audio(
+            generator = generate_and_save_audio(
                 body.input,
                 lang=body.language,
                 voice=body.voice,
                 speed=body.speed,
             )
-            print(file_name)
 
-            def iterfile():
-                with open(file_name, "rb") as file:
-                    yield from file
+            def iter_audio():
+                with io.BytesIO() as wav_buffer:
+                    # Create a WAV file in memory
+                    with wave.open(wav_buffer, "wb") as wav_file:
+                        wav_file.setnchannels(1)  # Mono audio
+                        wav_file.setsampwidth(2)  # 16-bit audio
+                        wav_file.setframerate(24000)  # Sample rate
+
+                        for _, _, audio in generator:
+                            audio_np = audio.numpy()
+                            audio_int16 = (audio_np * 32767).astype(np.int16)
+                            wav_file.writeframes(
+                                audio_int16.tobytes()
+                            )  # Write to in-memory WAV
+
+                    # Yield WAV file content as a stream
+                    wav_buffer.seek(0)
+                    yield from wav_buffer
+
+            return StreamingResponse(
+                iter_audio(),
+                media_type="audio/mpeg",  # Adjust based on your output format
+                headers={"Accept-Ranges": "bytes"},
+            )
 
             return StreamingResponse(
                 iterfile(),

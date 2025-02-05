@@ -9,6 +9,12 @@ import re
 from typing import Literal
 from speaches import kokoro_utils
 
+# import soundfile as sf
+import numpy as np
+import wave
+from pydub import AudioSegment
+from pydub.silence import split_on_silence
+
 
 def create_audio_dir():
     """Creates the 'kokoro_audio' directory in the root folder if it doesn't exist."""
@@ -109,13 +115,6 @@ def tts_file_name(text):
     return file_name
 
 
-# import soundfile as sf
-import numpy as np
-import wave
-from pydub import AudioSegment
-from pydub.silence import split_on_silence
-
-
 def remove_silence_function(file_path, minimum_silence=50):
     # Extract file name and format from the provided path
     output_path = file_path.replace(".wav", "_no_silence.wav")
@@ -138,12 +137,14 @@ def generate_and_save_audio(
     lang=kokoro_utils.Language,
     voice="af_bella",
     speed=1,
-    remove_silence=False,
     keep_silence_up_to=0.05,
 ):
     text = clean_text(text)
     update_pipeline(lang)
     generator = pipeline(text, voice=voice, speed=speed, split_pattern=r"\n+")
+
+    return generator
+
     save_path = tts_file_name(text)
     # Open the WAV file for writing
     with wave.open(save_path, "wb") as wav_file:
@@ -165,10 +166,5 @@ def generate_and_save_audio(
 
             # Write the audio chunk to the WAV file
             wav_file.writeframes(audio_bytes)
-
-    if remove_silence:
-        keep_silence = int(keep_silence_up_to * 1000)
-        new_wave_file = remove_silence_function(save_path, minimum_silence=keep_silence)
-        return new_wave_file, new_wave_file
 
     return save_path

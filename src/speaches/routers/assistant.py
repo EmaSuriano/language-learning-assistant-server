@@ -156,7 +156,7 @@ async def generate_stream(
     print(messages)
 
     llm = ChatOllama(
-        model="nemotron-mini",  # or any model available in your Ollama instance
+        model="phi4",  # or any model available in your Ollama instance
         temperature=request_data.temperature,
         num_predict=request_data.max_tokens,
         base_url="http://localhost:11434",  # adjust if your Ollama endpoint is different
