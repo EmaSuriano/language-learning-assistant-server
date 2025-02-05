@@ -8,12 +8,16 @@ from pydantic import BaseModel, BeforeValidator, Field, model_validator
 from speaches import kokoro_utils
 from speaches.api_types import Voice
 from speaches.audio import convert_audio_format
-from speaches.dependencies import KokoroModelManagerDependency, PiperModelManagerDependency
+from speaches.dependencies import (
+    # KokoroModelManagerDependency,
+    PiperModelManagerDependency,
+)
 from speaches.hf_utils import (
     get_kokoro_model_path,
     list_piper_models,
     read_piper_voices_config,
 )
+from speaches.kokoro import generate_and_save_audio
 
 DEFAULT_MODEL_ID = "hexgrad/Kokoro-82M"
 # https://platform.openai.com/docs/api-reference/audio/createSpeech#audio-createspeech-response_format
@@ -26,7 +30,14 @@ OPENAI_SUPPORTED_SPEECH_MODEL = ("tts-1", "tts-1-hd")
 
 # https://platform.openai.com/docs/api-reference/audio/createSpeech#audio-createspeech-voice
 # https://platform.openai.com/docs/guides/text-to-speech/voice-options
-OPENAI_SUPPORTED_SPEECH_VOICE_NAMES = ("alloy", "echo", "fable", "onyx", "nova", "shimmer")
+OPENAI_SUPPORTED_SPEECH_VOICE_NAMES = (
+    "alloy",
+    "echo",
+    "fable",
+    "onyx",
+    "nova",
+    "shimmer",
+)
 
 # https://platform.openai.com/docs/guides/text-to-speech/supported-output-formats
 type ResponseFormat = Literal["mp3", "flac", "wav", "pcm"]
@@ -44,7 +55,9 @@ router = APIRouter(tags=["speech-to-text"])
 
 def handle_openai_supported_model_ids(model_id: str) -> str:
     if model_id in OPENAI_SUPPORTED_SPEECH_MODEL:
-        logger.warning(f"{model_id} is not a valid model name. Using '{DEFAULT_MODEL_ID}' instead.")
+        logger.warning(
+            f"{model_id} is not a valid model name. Using '{DEFAULT_MODEL_ID}' instead."
+        )
         return DEFAULT_MODEL_ID
     return model_id
 
@@ -61,12 +74,16 @@ ModelId = Annotated[
 
 def handle_openai_supported_voices(voice_id: str) -> str:
     if voice_id in OPENAI_SUPPORTED_SPEECH_VOICE_NAMES:
-        logger.warning(f"{voice_id} is not a valid voice id. Using '{DEFAULT_VOICE_ID}' instead.")
+        logger.warning(
+            f"{voice_id} is not a valid voice id. Using '{DEFAULT_VOICE_ID}' instead."
+        )
         return DEFAULT_VOICE_ID
     return voice_id
 
 
-VoiceId = Annotated[str, BeforeValidator(handle_openai_supported_voices)]  # TODO: description and examples
+VoiceId = Annotated[
+    str, BeforeValidator(handle_openai_supported_voices)
+]  # TODO: description and examples
 
 
 class CreateSpeechRequestBody(BaseModel):
@@ -129,45 +146,77 @@ Each quality has a different default sample rate:
 @router.post("/v1/audio/speech")
 async def synthesize(
     piper_model_manager: PiperModelManagerDependency,
-    kokoro_model_manager: KokoroModelManagerDependency,
+    # kokoro_model_manager: KokoroModelManagerDependency,
     body: CreateSpeechRequestBody,
 ) -> StreamingResponse:
     match body.model:
         case "hexgrad/Kokoro-82M":
-            # TODO: download the `voices.bin` file
-            with kokoro_model_manager.load_model(body.voice) as tts:
-                audio_generator = kokoro_utils.generate_audio(
-                    tts,
-                    body.input,
-                    body.voice,
-                    language=body.language or "en-us",
-                    speed=body.speed,
-                    sample_rate=body.sample_rate,
-                )
-                if body.response_format != "pcm":
-                    audio_generator = (
-                        convert_audio_format(
-                            audio_bytes, body.sample_rate or kokoro_utils.SAMPLE_RATE, body.response_format
-                        )
-                        async for audio_bytes in audio_generator
-                    )
-                return StreamingResponse(audio_generator, media_type=f"audio/{body.response_format}")
+            file_name = generate_and_save_audio(
+                body.input,
+                lang=body.language,
+                voice=body.voice,
+                speed=body.speed,
+            )
+            print(file_name)
+
+            def iterfile():
+                with open(file_name, "rb") as file:
+                    yield from file
+
+            return StreamingResponse(
+                iterfile(),
+                media_type="audio/mpeg",  # Adjust based on your audio file type
+                headers={
+                    "Accept-Ranges": "bytes",
+                    "Content-Disposition": f"attachment; filename={file_name}",
+                },
+            )
+            return None
+            # # TODO: download the `voices.bin` file
+            # with kokoro_model_manager.load_model(body.voice) as tts:
+            #     audio_generator = kokoro_utils.generate_audio(
+            #         tts,
+            #         body.input,
+            #         body.voice,
+            #         language=body.language or "en-us",
+            #         speed=body.speed,
+            #         sample_rate=body.sample_rate,
+            #     )
+            #     if body.response_format != "pcm":
+            #         audio_generator = (
+            #             convert_audio_format(
+            #                 audio_bytes,
+            #                 body.sample_rate or kokoro_utils.SAMPLE_RATE,
+            #                 body.response_format,
+            #             )
+            #             async for audio_bytes in audio_generator
+            #         )
+            #     return StreamingResponse(
+            #         audio_generator, media_type=f"audio/{body.response_format}"
+            #     )
         case "rhasspy/piper-voices":
             from speaches import piper_utils
 
             with piper_model_manager.load_model(body.voice) as piper_tts:
                 # TODO: async generator
                 audio_generator = piper_utils.generate_audio(
-                    piper_tts, body.input, speed=body.speed, sample_rate=body.sample_rate
+                    piper_tts,
+                    body.input,
+                    speed=body.speed,
+                    sample_rate=body.sample_rate,
                 )
                 if body.response_format != "pcm":
                     audio_generator = (
                         convert_audio_format(
-                            audio_bytes, body.sample_rate or piper_tts.config.sample_rate, body.response_format
+                            audio_bytes,
+                            body.sample_rate or piper_tts.config.sample_rate,
+                            body.response_format,
                         )
                         for audio_bytes in audio_generator
                     )
-                return StreamingResponse(audio_generator, media_type=f"audio/{body.response_format}")
+                return StreamingResponse(
+                    audio_generator, media_type=f"audio/{body.response_format}"
+                )
 
 
 @router.get("/v1/audio/speech/voices")

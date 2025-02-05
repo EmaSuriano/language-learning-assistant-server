@@ -28,19 +28,9 @@ from speaches.routers.stt import (
 from speaches.routers.vad import (
     router as vad_router,
 )
-
-# https://swagger.io/docs/specification/v3_0/grouping-operations-with-tags/
-# https://fastapi.tiangolo.com/tutorial/metadata/#metadata-for-tags
-TAGS_METADATA = [
-    {"name": "automatic-speech-recognition"},
-    {"name": "speech-to-text"},
-    {"name": "models"},
-    {"name": "diagnostic"},
-    {
-        "name": "experimental",
-        "description": "Not meant for public use yet. May change or be removed at any time.",
-    },
-]
+from speaches.routers.assistant import (
+    router as assistant_router,
+)
 
 
 def create_app() -> FastAPI:
@@ -51,13 +41,17 @@ def create_app() -> FastAPI:
     logger.debug(f"Config: {config}")
 
     if platform.machine() != "x86_64":
-        logger.warning("`POST /v1/audio/speech` with `model=rhasspy/piper-voices` is only supported on x86_64 machines")
+        logger.warning(
+            "`POST /v1/audio/speech` with `model=rhasspy/piper-voices` is only supported on x86_64 machines"
+        )
 
     dependencies = []
     if config.api_key is not None:
         dependencies.append(ApiKeyDependency)
 
-    app = FastAPI(dependencies=dependencies, openapi_tags=TAGS_METADATA)
+    app = FastAPI(
+        dependencies=dependencies,
+    )
 
     app.include_router(chat_router)
     app.include_router(stt_router)
@@ -65,6 +59,7 @@ def create_app() -> FastAPI:
     app.include_router(misc_router)
     app.include_router(speech_router)
     app.include_router(vad_router)
+    app.include_router(assistant_router)
 
     if config.allow_origins is not None:
         app.add_middleware(

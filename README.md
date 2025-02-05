@@ -9,6 +9,17 @@ Try it out on the [HuggingFace Space](https://huggingface.co/spaces/speaches-ai/
 
 See the documentation for installation instructions and usage: [speaches.ai](https://speaches.ai/)
 
+## Setup
+
+```bash
+git clone https://github.com/speaches-ai/speaches.git
+cd speaches
+uv venv
+source .venv/bin/activate
+uv sync --all-extras
+uv run -- uvicorn --factory --host 0.0.0.0 speaches.main:create_app --reload
+```
+
 ## Features:
 
 - GPU and CPU support.

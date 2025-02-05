@@ -10,7 +10,8 @@ import time
 from typing import TYPE_CHECKING
 
 from faster_whisper import WhisperModel
-from kokoro_onnx import Kokoro
+
+# from kokoro_onnx import Kokoro
 from onnxruntime import InferenceSession
 
 from speaches.hf_utils import get_kokoro_model_path, get_piper_voice_model_file
@@ -32,7 +33,11 @@ logger = logging.getLogger(__name__)
 
 class SelfDisposingModel[T]:
     def __init__(
-        self, model_id: str, load_fn: Callable[[], T], ttl: int, unload_fn: Callable[[str], None] | None = None
+        self,
+        model_id: str,
+        load_fn: Callable[[], T],
+        ttl: int,
+        unload_fn: Callable[[str], None] | None = None,
     ) -> None:
         self.model_id = model_id
         self.load_fn = load_fn
@@ -47,9 +52,13 @@ class SelfDisposingModel[T]:
     def unload(self) -> None:
         with self.rlock:
             if self.model is None:
-                raise ValueError(f"Model {self.model_id} is not loaded. {self.ref_count=}")
+                raise ValueError(
+                    f"Model {self.model_id} is not loaded. {self.ref_count=}"
+                )
             if self.ref_count > 0:
-                raise ValueError(f"Model {self.model_id} is still in use. {self.ref_count=}")
+                raise ValueError(
+                    f"Model {self.model_id} is still in use. {self.ref_count=}"
+                )
             if self.expire_timer:
                 self.expire_timer.cancel()
             self.model = None
@@ -65,23 +74,33 @@ class SelfDisposingModel[T]:
             logger.debug(f"Loading model {self.model_id}")
             start = time.perf_counter()
             self.model = self.load_fn()
-            logger.info(f"Model {self.model_id} loaded in {time.perf_counter() - start:.2f}s")
+            logger.info(
+                f"Model {self.model_id} loaded in {time.perf_counter() - start:.2f}s"
+            )
 
     def _increment_ref(self) -> None:
         with self.rlock:
             self.ref_count += 1
             if self.expire_timer:
-                logger.debug(f"Model was set to expire in {self.expire_timer.interval}s, cancelling")
+                logger.debug(
+                    f"Model was set to expire in {self.expire_timer.interval}s, cancelling"
+                )
                 self.expire_timer.cancel()
-            logger.debug(f"Incremented ref count for {self.model_id}, {self.ref_count=}")
+            logger.debug(
+                f"Incremented ref count for {self.model_id}, {self.ref_count=}"
+            )
 
     def _decrement_ref(self) -> None:
         with self.rlock:
             self.ref_count -= 1
-            logger.debug(f"Decremented ref count for {self.model_id}, {self.ref_count=}")
+            logger.debug(
+                f"Decremented ref count for {self.model_id}, {self.ref_count=}"
+            )
             if self.ref_count <= 0:
                 if self.ttl > 0:
-                    logger.info(f"Model {self.model_id} is idle, scheduling offload in {self.ttl}s")
+                    logger.info(
+                        f"Model {self.model_id} is idle, scheduling offload in {self.ttl}s"
+                    )
                     self.expire_timer = threading.Timer(self.ttl, self.unload)
                     self.expire_timer.start()
                 elif self.ttl == 0:
@@ -105,7 +124,9 @@ class SelfDisposingModel[T]:
 class WhisperModelManager:
     def __init__(self, whisper_config: WhisperConfig) -> None:
         self.whisper_config = whisper_config
-        self.loaded_models: OrderedDict[str, SelfDisposingModel[WhisperModel]] = OrderedDict()
+        self.loaded_models: OrderedDict[str, SelfDisposingModel[WhisperModel]] = (
+            OrderedDict()
+        )
         self._lock = threading.Lock()
 
     def _load_fn(self, model_id: str) -> WhisperModel:
@@ -152,7 +173,9 @@ ONNX_PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 class PiperModelManager:
     def __init__(self, ttl: int) -> None:
         self.ttl = ttl
-        self.loaded_models: OrderedDict[str, SelfDisposingModel[PiperVoice]] = OrderedDict()
+        self.loaded_models: OrderedDict[str, SelfDisposingModel[PiperVoice]] = (
+            OrderedDict()
+        )
         self._lock = threading.Lock()
 
     def _load_fn(self, model_id: str) -> PiperVoice:
@@ -192,40 +215,40 @@ class PiperModelManager:
             return self.loaded_models[model_name]
 
 
-class KokoroModelManager:
-    def __init__(self, ttl: int) -> None:
-        self.ttl = ttl
-        self.loaded_models: OrderedDict[str, SelfDisposingModel[Kokoro]] = OrderedDict()
-        self._lock = threading.Lock()
+# class KokoroModelManager:
+#     def __init__(self, ttl: int) -> None:
+#         self.ttl = ttl
+#         self.loaded_models: OrderedDict[str, SelfDisposingModel[Kokoro]] = OrderedDict()
+#         self._lock = threading.Lock()
 
-    # TODO
-    def _load_fn(self, _model_id: str) -> Kokoro:
-        model_path = get_kokoro_model_path()
-        voices_path = model_path.parent / "voices.bin"
-        inf_sess = InferenceSession(model_path, providers=ONNX_PROVIDERS)
-        return Kokoro.from_session(inf_sess, str(voices_path))
+#     # TODO
+#     def _load_fn(self, _model_id: str) -> Kokoro:
+#         model_path = get_kokoro_model_path()
+#         voices_path = model_path.parent / "voices.bin"
+#         inf_sess = InferenceSession(model_path, providers=ONNX_PROVIDERS)
+#         return Kokoro.from_session(inf_sess, str(voices_path))
 
-    def _handle_model_unload(self, model_name: str) -> None:
-        with self._lock:
-            if model_name in self.loaded_models:
-                del self.loaded_models[model_name]
+#     def _handle_model_unload(self, model_name: str) -> None:
+#         with self._lock:
+#             if model_name in self.loaded_models:
+#                 del self.loaded_models[model_name]
 
-    def unload_model(self, model_name: str) -> None:
-        with self._lock:
-            model = self.loaded_models.get(model_name)
-            if model is None:
-                raise KeyError(f"Model {model_name} not found")
-            self.loaded_models[model_name].unload()
+#     def unload_model(self, model_name: str) -> None:
+#         with self._lock:
+#             model = self.loaded_models.get(model_name)
+#             if model is None:
+#                 raise KeyError(f"Model {model_name} not found")
+#             self.loaded_models[model_name].unload()
 
-    def load_model(self, model_name: str) -> SelfDisposingModel[Kokoro]:
-        with self._lock:
-            if model_name in self.loaded_models:
-                logger.debug(f"{model_name} model already loaded")
-                return self.loaded_models[model_name]
-            self.loaded_models[model_name] = SelfDisposingModel[Kokoro](
-                model_name,
-                load_fn=lambda: self._load_fn(model_name),
-                ttl=self.ttl,
-                unload_fn=self._handle_model_unload,
-            )
-            return self.loaded_models[model_name]
+#     def load_model(self, model_name: str) -> SelfDisposingModel[Kokoro]:
+#         with self._lock:
+#             if model_name in self.loaded_models:
+#                 logger.debug(f"{model_name} model already loaded")
+#                 return self.loaded_models[model_name]
+#             self.loaded_models[model_name] = SelfDisposingModel[Kokoro](
+#                 model_name,
+#                 load_fn=lambda: self._load_fn(model_name),
+#                 ttl=self.ttl,
+#                 unload_fn=self._handle_model_unload,
+#             )
+#             return self.loaded_models[model_name]
